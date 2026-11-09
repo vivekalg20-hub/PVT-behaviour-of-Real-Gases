@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Real Gas PVT Calculator</title>
+<style>
+/* Updated Cool Blue Theme (Light Mode) */
+:root{--bg:#f0f4f8;--card:#ffffff;--tx:#102a43;--mu:#627d98;--ac:#0284c7;--bd:#d9e2ec;--gr:#e2e8f0;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+/* Updated Midnight Slate Theme (Dark Mode) */
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f172a;--card:#1e293b;--tx:#f1f5f9;--mu:#94a3b8;--ac:#38bdf8;--bd:#334155;--gr:#1e293b}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.5rem;margin:0 0 4px}p.s{color:var(--mu);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+label{display:block;font-size:.8rem;color:var(--mu);margin-bottom:4px}
+input,select{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font:inherit}
+button{margin-top:14px;padding:10px 20px;border:0;border-radius:8px;background:var(--ac);color:var(--bg);font:inherit;font-weight:600;cursor:pointer}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:560px}
+th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--bd)}th:first-child,td:first-child{text-align:left}
+th{color:var(--mu);font-weight:500;font-size:.8rem}
+.n{color:var(--mu);font-size:.85rem;margin-top:10px}canvas{width:100%;height:340px;display:block}
+</style>
+</head>
+<body>
+<main>
+<h1>Real Gas PVT Calculator</h1>
+<p class="s">Cubic equations of state (vdW, RK, SRK, Peng–Robinson): Z, V, fugacity, H and S</p>
+<div class="card">
+<div class="row">
+<div><label>Gas</label><select id="gas"></select></div>
+<div><label>Temperature (K)</label><input id="T" type="number" value="300" step="any"></div>
+<div><label>Pressure (bar)</label><input id="P" type="number" value="50" step="any"></div>
+<div><label>Root</label><select id="rt"><option value="A">Auto (stable)</option><option value="V">Vapour-like</option><option value="L">Liquid-like</option></select></div>
+<div><label>Plot EOS</label><select id="pe"><option>PR</option><option>SRK</option><option>RK</option><option>vdW</option></select></div>
+</div>
+<button id="go">Calculate</button>
+<div class="n" id="info"></div>
+</div>
+<div class="card"><div class="tw"><table id="tbl"></table></div><div class="n" id="note"></div></div>
+<div class="card"><div class="tw"><table id="tbl3"></table></div><div class="n">Fugacity f = φP, where φ is the fugacity coefficient (ln φ comes from the EOS). At Psat the liquid and vapour fugacities are equal, so one f<sub>sat</sub> value is shown.</div></div>
+<div class="card"><div class="tw"><table id="tbl2"></table></div><div class="n">Reference state: ideal gas at 298.15 K and 1 bar has H = 0 and S = 0. H<sup>R</sup> and S<sup>R</sup> are residual properties. Ideal-gas Cp data is valid roughly from 298 to 1500 K.</div></div>
+<div class="card"><canvas id="cv"></canvas><div class="n">Solid lines are isotherms. The thick line is your T, and the dashed line is your P.</div></div>
+</main>
+<script>
+const R=83.14;
+const G={CH4:[190.56,45.99,.011,16.043],C2H6:[305.32,48.72,.099,30.07],C3H8:[369.83,42.48,.152,44.097],
+C4H10:[425.12,37.96,.2,58.123],N2:[126.2,33.98,.037,28.014],O2:[154.58,50.43,.022,31.999],
+CO2:[304.13,73.77,.225,44.01],NH3:[405.4,113.5,.257,17.031],H2O:[647.1,220.64,.344,18.015]};
+const S2=Math.SQRT2;
+const E={vdW:[0,0,1/8,27/64],RK:[1,0,.08664,.42748],SRK:[1,0,.08664,.42748],PR:[1+S2,1-S2,.0778,.45724]};
+function alpha(e,Tr,w){if(e==="vdW")return 1;if(e==="RK")return Math.pow(Tr,-.5);
+const m=e==="SRK"?.48+1.574*w-.176*w*w:.37464+1.54226*w-.26992*w*w;return Math.pow(1+m*(1-Math.sqrt(Tr)),2)}
+function par(e,g,T){const[Tc,Pc,w]=G[g],[,,Om,Psi]=E[e];return{a:Psi*alpha(e,T/Tc,w)*R*R*Tc*Tc/Pc,b:Om*R*Tc/Pc}}
+function cubic(p,q,r){const P=q-p*p/3,Q=2*p*p*p/27-p*q/3+r,d=Q*Q/4+Math.pow(P/3,3),sh=-p/3;
+if(d>0){const s=Math.sqrt(d);return[Math.cbrt(-Q/2+s)+Math.cbrt(-Q/2-s)+sh]}
+const m=2*Math.sqrt(-P/3);let c=3*Q/(P*m);c=Math.max(-1,Math.min(1,c));const th=Math.acos(c)/3;
+return[0,1,2].map(k=>m*Math.cos(th-2*Math.PI*k/3)+sh).sort((x,y)=>x-y)}
+function zr(e,g,T,P){const[sg,ep]=E[e],{a,b}=par(e,g,T),be=b*P/(R*T),q=a/(b*R*T);
+const c2=(ep+sg-1)*be-1,c1=ep*sg*be*be-(ep+sg)*be*(be+1)+q*be,c0=-(ep*sg*be*be*(be+1)+q*be*be);
+return{r:cubic(c2,c1,c0).filter(z=>z>be+1e-12),be,q}}
+function lnphi(e,Z,be,q){const[sg,ep]=E[e];const I=e==="vdW"?be/Z:Math.log((Z+sg*be)/(Z+ep*be))/(sg-ep);
+return Z-1-Math.log(Z-be)-q*I}
+function psat(e,g,T){const[Tc,Pc]=G[g];if(T>=Tc)return null;
+const f=P=>{const{r,be,q}=zr(e,g,T,P);return r.length<3?null:lnphi(e,r[0],be,q)-lnphi(e,r[r.length-1],be,q)};
+let pp=null,pg=null;
+for(let i=0;i<3300;i++){const P=i<300?1e-4*Pc*Math.pow(.5/1e-4,i/299):.5*Pc+(i-300)*.5*Pc/2999;
+const v=f(P);if(v===null){pp=null;pg=null;continue}
+if(pg!==null&&pg*v<0){let lo=pp,hi=P,gl=pg;for(let k=0;k<80;k++){const m=(lo+hi)/2,gm=f(m);if(gm===null)break;
+if(gl*gm<=0)hi=m;else{lo=m;gl=gm}}return(lo+hi)/2}pp=P;pg=v}return null}
+const RJ=8.314,T0=298.15,P0=1;
+const CP={CH4:[1.702,9.081e-3,-2.164e-6,0],C2H6:[1.131,19.225e-3,-5.561e-6,0],C3H8:[1.213,28.785e-3,-8.824e-6,0],
+C4H10:[1.935,36.915e-3,-11.402e-6,0],N2:[3.28,.593e-3,0,4e3],O2:[3.639,.506e-3,0,-2.27e4],
+CO2:[5.457,1.045e-3,0,-1.157e5],NH3:[3.578,3.02e-3,0,-1.86e4],H2O:[3.47,1.45e-3,0,1.21e4]};
+function ideal(g,T,P){const[A,B,C,D]=CP[g];
+const H=A*(T-T0)+B/2*(T*T-T0*T0)+C/3*(T**3-T0**3)-D*(1/T-1/T0);
+const S=A*Math.log(T/T0)+B*(T-T0)+C/2*(T*T-T0*T0)-D/2*(1/(T*T)-1/(T0*T0))-Math.log(P/P0);
+return{H:RJ*H,S:RJ*S}}
+function resid(e,g,T,Z,be,q){const[Tc,,w]=G[g],[sg,ep]=E[e],{a,b}=par(e,g,T),Tr=T/Tc;
+let Tda=0;if(e==="RK")Tda=-.5*a;else if(e!=="vdW"){const m=e==="SRK"?.48+1.574*w-.176*w*w:.37464+1.54226*w-.26992*w*w,al=alpha(e,Tr,w);Tda=-(a/al)*m*Math.sqrt(al*Tr)}
+const I=e==="vdW"?be/Z:Math.log((Z+sg*be)/(Z+ep*be))/(sg-ep);
+return{H:RJ*T*(Z-1+(Tda-a)/(b*R*T)*I),S:RJ*(Math.log(Z-be)+Tda/(b*R*T)*I)}}
+const $=id=>document.getElementById(id);
+Object.keys(G).forEach(k=>{const o=document.createElement("option");o.textContent=k;$("gas").appendChild(o)});
+$("gas").value="CO2";
+function calc(){
+const g=$("gas").value,T=+$("T").value,P=+$("P").value;
+if(!(T>0&&P>0)){$("info").textContent="Please enter positive T and P.";return}
+const[Tc,Pc,w,M]=G[g];
+$("info").textContent=`Tc = ${Tc} K, Pc = ${Pc} bar, Tr = ${(T/Tc).toFixed(3)}, Pr = ${(P/Pc).toFixed(3)}. Ideal gas: V = ${(R*T/P).toFixed(1)} cm³/mol`;
+let h="<tr><th>EOS</th><th>Phase</th><th>Z</th><th>V (cm³/mol)</th><th>ρ (kg/m³)</th><th>Psat (bar)</th></tr>",notes=[];
+let h3="<tr><th>EOS</th><th>Phase</th><th>φ</th><th>f (bar)</th><th>Psat (bar)</th><th>f<sub>sat</sub> (bar)</th></tr>";
+let h2="<tr><th>EOS</th><th>H<sup>R</sup> (J/mol)</th><th>S<sup>R</sup> (J/mol·K)</th><th>H (J/mol)</th><th>S (J/mol·K)</th></tr>";
+const pick=$("rt").value,id=ideal(g,T,P);
+for(const e of Object.keys(E)){const{r,be,q}=zr(e,g,T,P);
+if(!r.length){h+=`<tr><td>${e}</td><td colspan=6>no physical root</td></tr>`;h2+=`<tr><td>${e}</td><td colspan=4>no physical root</td></tr>`;h3+=`<tr><td>${e}</td><td colspan=5>no physical root</td></tr>`;continue}
+let Z=r[r.length-1],pl=r.length===3?"Vapour":"Single root";
+if(r.length===3&&(pick==="L"||(pick==="A"&&lnphi(e,r[0],be,q)<lnphi(e,r[2],be,q)))){Z=r[0];pl="Liquid"}
+const V=Z*R*T/P,ph=Math.exp(lnphi(e,Z,be,q)),ps=psat(e,g,T),rs=resid(e,g,T,Z,be,q);
+h+=`<tr><td>${e}</td><td>${pl}</td><td>${Z.toFixed(4)}</td><td>${V.toFixed(1)}</td><td>${(M/V*1000).toFixed(1)}</td><td>${ps?ps.toFixed(2):"–"}</td></tr>`;
+let fs="–";if(ps){const s2=zr(e,g,T,ps);if(s2.r.length)fs=(ps*Math.exp(lnphi(e,s2.r[s2.r.length-1],s2.be,s2.q))).toFixed(2)}
+h3+=`<tr><td>${e}</td><td>${pl}</td><td>${ph.toFixed(4)}</td><td>${(ph*P).toFixed(3)}</td><td>${ps?ps.toFixed(2):"–"}</td><td>${fs}</td></tr>`;
+h2+=`<tr><td>${e}</td><td>${rs.H.toFixed(0)}</td><td>${rs.S.toFixed(3)}</td><td>${(id.H+rs.H).toFixed(0)}</td><td>${(id.S+rs.S).toFixed(3)}</td></tr>`;
+if(r.length===3)notes.push(`${e}: 3 roots, Z = ${r[0].toFixed(4)} (liquid) / ${r[2].toFixed(4)} (vapour), f = ${(P*Math.exp(lnphi(e,r[0],be,q))).toFixed(2)} / ${(P*Math.exp(lnphi(e,r[2],be,q))).toFixed(2)} bar`)}
+$("tbl").innerHTML=h;$("tbl2").innerHTML=h2;$("tbl3").innerHTML=h3;
+$("note").textContent=notes.join("  |  ");
+plot(g,T,P)}
+function plot(g,T,P){
+const cv=$("cv"),dpr=window.devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;
+const c=cv.getContext("2d");c.scale(dpr,dpr);
+const css=getComputedStyle(document.documentElement),col=n=>css.getPropertyValue(n).trim();
+const e=$("pe").value,[sg,ep]=E[e],[Tc,Pc]=G[g],{b}=par(e,g,Tc);
+const L=50,B=30,Tp=10,Rr=10,Vmax=Math.max(12*b,3*R*T/P),Pmax=2*Pc;
+const X=v=>L+(v-b)/(Vmax-b)*(W-L-Rr),Y=p=>H-B-p/Pmax*(H-B-Tp);
+c.fillStyle=col("--card");c.fillRect(0,0,W,H);c.strokeStyle=col("--gr");c.fillStyle=col("--mu");c.font="11px system-ui";c.lineWidth=1;
+for(let i=0;i<=4;i++){const p=Pmax*i/4;c.beginPath();c.moveTo(L,Y(p));c.lineTo(W-Rr,Y(p));c.stroke();c.fillText(p.toFixed(0),6,Y(p)+4)}
+c.fillText("V (cm³/mol)",W/2-30,H-8);c.fillText("P (bar)",6,10);
+const cs=["#3b82f6","#22c55e","#f59e0b","#ef4444"];
+const draw=(Tk,color,lw)=>{const{a}=par(e,g,Tk);c.beginPath();c.strokeStyle=color;c.lineWidth=lw;let st=false;
+for(let i=0;i<=500;i++){const v=b*1.03+(Vmax-b*1.03)*i/500,p=R*Tk/(v-b)-a/((v+ep*b)*(v+sg*b));
+if(p<0||p>Pmax){st=false;continue}if(!st){c.moveTo(X(v),Y(p));st=true}else c.lineTo(X(v),Y(p))}c.stroke()};
+[.8,.9,1,1.2].forEach((t,i)=>{draw(t*Tc,cs[i],1.2);c.fillStyle=cs[i];c.fillText("Tr="+t,W-Rr-52,Tp+14+i*14)});
+draw(T,col("--ac"),3);
+if(P<=Pmax){c.setLineDash([5,4]);c.strokeStyle=col("--tx");c.lineWidth=1;c.beginPath();c.moveTo(L,Y(P));c.lineTo(W-Rr,Y(P));c.stroke();c.setLineDash([])}}
+$("go").onclick=calc;["gas","pe","rt"].forEach(i=>$(i).onchange=calc);
+["T","P"].forEach(i=>$(i).addEventListener("keydown",ev=>{if(ev.key==="Enter")calc()}));
+window.addEventListener("resize",()=>{if($("tbl").innerHTML)plot($("gas").value,+$("T").value,+$("P").value)});
+calc();
+</script>
+</body>
+</html>
